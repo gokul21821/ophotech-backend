@@ -1,0 +1,68 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+// NOTE: datasource is now defined in prisma.config.ts (Prisma v7)
+datasource db {
+  provider = "postgresql"
+}
+
+// User model
+model User {
+  id        String     @id @default(cuid())
+  email     String     @unique
+  username  String     @unique
+  password  String
+  role      String     @default("admin")
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  newsletters   Newsletter[]
+  blogs         Blog[]
+  caseStudies   CaseStudy[]
+
+  @@index([email])
+  @@index([username])
+}
+
+// Newsletter model
+model Newsletter {
+  id          String   @id @default(cuid())
+  title       String
+  description String   @db.Text
+  date        DateTime
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  authorId    String
+  author      User     @relation(fields: [authorId], references: [id], onDelete: Cascade)
+
+  @@index([authorId])
+}
+
+// Blog model
+model Blog {
+  id          String   @id @default(cuid())
+  title       String
+  description String   @db.Text
+  date        DateTime
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  authorId    String
+  author      User     @relation(fields: [authorId], references: [id], onDelete: Cascade)
+
+  @@index([authorId])
+}
+
+// CaseStudy model
+model CaseStudy {
+  id          String   @id @default(cuid())
+  title       String
+  description String   @db.Text
+  date        DateTime
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  authorId    String
+  author      User     @relation(fields: [authorId], references: [id], onDelete: Cascade)
+
+  @@index([authorId])
+}
