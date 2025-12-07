@@ -30,6 +30,7 @@ model Newsletter {
   id          String   @id @default(cuid())
   title       String
   description String   @db.Text
+  imagePath   String?  // NEW: nullable string to store Supabase file path
   date        DateTime
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -44,6 +45,7 @@ model Blog {
   id          String   @id @default(cuid())
   title       String
   description String   @db.Text
+  imagePath   String?  // NEW: nullable string to store Supabase file path
   date        DateTime
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -58,6 +60,7 @@ model CaseStudy {
   id          String   @id @default(cuid())
   title       String
   description String   @db.Text
+  imagePath   String?  // NEW: nullable string to store Supabase file path
   date        DateTime
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
