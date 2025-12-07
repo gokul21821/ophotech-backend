@@ -11,7 +11,7 @@ import caseStudyRoutes from './routes/caseStudies'; // Add this import
 dotenv.config();
 
 const app: Express = express();
-const PORT = process.env.API_PORT || 5000;
+const PORT = Number(process.env.API_PORT) || 8000;
 
 // Middleware
 app.use(helmet());
@@ -48,11 +48,11 @@ app.use((err: any, req: Request, res: Response, next: NextFunction) => {
 });
 
 // Start server
-app.listen(PORT, () => {
-  console.log(`✅ Server running on http://localhost:${PORT}`);
-  console.log(`📋 Health check: http://localhost:${PORT}/health`);
-  console.log(`🔐 Auth routes: http://localhost:${PORT}/api/auth`);
-  console.log(`📰 Newsletter routes: http://localhost:${PORT}/api/newsletters`);
-  console.log(`📝 Blog routes: http://localhost:${PORT}/api/blogs`);
-  console.log(`🎯 Case study routes: http://localhost:${PORT}/api/case-studies`);
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`✅ Server running on http://0.0.0.0:${PORT}`);
+  console.log(`📋 Health check: http://0.0.0.0:${PORT}/health`);
+  console.log(`🔐 Auth routes: http://0.0.0.0:${PORT}/api/auth`);
+  console.log(`📰 Newsletter routes: http://0.0.0.0:${PORT}/api/newsletters`);
+  console.log(`📝 Blog routes: http://0.0.0.0:${PORT}/api/blogs`);
+  console.log(`🎯 Case study routes: http://0.0.0.0:${PORT}/api/case-studies`);
 });
