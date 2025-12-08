@@ -5,8 +5,11 @@ import {
   createNewsletter,
   updateNewsletter,
   deleteNewsletter,
+  uploadNewsletterImage,
+  deleteNewsletterImage,
 } from '../controllers/newsletterController';
 import { authenticateToken } from '../middleware/authMiddleware';
+import { uploadMiddleware } from '../middleware/uploadMiddleware';
 
 const router = Router();
 
@@ -18,5 +21,7 @@ router.get('/:id', getNewsletterById);
 router.post('/', authenticateToken, createNewsletter);
 router.put('/:id', authenticateToken, updateNewsletter);
 router.delete('/:id', authenticateToken, deleteNewsletter);
+router.post('/:id/image', authenticateToken, uploadMiddleware.single('file'), uploadNewsletterImage);
+router.delete('/:id/image', authenticateToken, deleteNewsletterImage);
 
 export default router;

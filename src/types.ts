@@ -24,6 +24,8 @@ export interface User {
       authorId: string;
       createdAt: Date;
       updatedAt: Date;
+  imagePath?: string | null;
+  imageUrl?: string | null;
     }
     
     export interface Blog {
@@ -34,6 +36,8 @@ export interface User {
       authorId: string;
       createdAt: Date;
       updatedAt: Date;
+  imagePath?: string | null;
+  imageUrl?: string | null;
     }
     
     export interface CaseStudy {
@@ -44,6 +48,8 @@ export interface User {
       authorId: string;
       createdAt: Date;
       updatedAt: Date;
+  imagePath?: string | null;
+  imageUrl?: string | null;
     }
     
     // Request types

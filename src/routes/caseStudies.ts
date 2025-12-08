@@ -5,8 +5,11 @@ import {
   createCaseStudy,
   updateCaseStudy,
   deleteCaseStudy,
+  uploadCaseStudyImage,
+  deleteCaseStudyImage,
 } from '../controllers/caseStudyController';
 import { authenticateToken } from '../middleware/authMiddleware';
+import { uploadMiddleware } from '../middleware/uploadMiddleware';
 
 const router = Router();
 
@@ -18,5 +21,7 @@ router.get('/:id', getCaseStudyById);
 router.post('/', authenticateToken, createCaseStudy);
 router.put('/:id', authenticateToken, updateCaseStudy);
 router.delete('/:id', authenticateToken, deleteCaseStudy);
+router.post('/:id/image', authenticateToken, uploadMiddleware.single('file'), uploadCaseStudyImage);
+router.delete('/:id/image', authenticateToken, deleteCaseStudyImage);
 
 export default router;

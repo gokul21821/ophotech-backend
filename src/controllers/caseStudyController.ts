@@ -2,6 +2,8 @@ import { Response } from 'express';
 import { AuthenticatedRequest } from '../types';
 import prisma from '../db';
 import sanitizeHtml from 'sanitize-html';
+import { deleteFile, getPublicUrl, uploadFile } from '../services/supabaseClient';
+import { generateFilePath, validateImageFile } from '../middleware/uploadMiddleware';
 
 // HTML sanitization config
 const sanitizeConfig = {
@@ -32,10 +34,15 @@ export async function getAllCaseStudies(
       },
     });
 
+    const dataWithUrls = caseStudies.map((c) => ({
+      ...c,
+      imageUrl: c.imagePath ? getPublicUrl(c.imagePath) : null,
+    }));
+
     res.status(200).json({
       success: true,
-      count: caseStudies.length,
-      data: caseStudies,
+      count: dataWithUrls.length,
+      data: dataWithUrls,
     });
   } catch (error) {
     console.error('Get case studies error:', error);
@@ -71,7 +78,10 @@ export async function getCaseStudyById(
 
     res.status(200).json({
       success: true,
-      data: caseStudy,
+      data: {
+        ...caseStudy,
+        imageUrl: caseStudy.imagePath ? getPublicUrl(caseStudy.imagePath) : null,
+      },
     });
   } catch (error) {
     console.error('Get case study error:', error);
@@ -106,13 +116,17 @@ export async function createCaseStudy(
       return;
     }
 
+    const parsedDate = date ? new Date(date) : new Date();
+    const finalDate = isNaN(parsedDate.getTime()) ? new Date() : parsedDate;
+
     // Create case study
     const caseStudy = await prisma.caseStudy.create({
       data: {
         title: title.trim(),
         description: sanitizedDescription,
-        date: new Date(date) || new Date(),
+        date: finalDate,
         authorId: req.user.userId,
+        imagePath: null,
       },
       include: {
         author: {
@@ -128,7 +142,10 @@ export async function createCaseStudy(
     res.status(201).json({
       success: true,
       message: 'Case study created successfully',
-      data: caseStudy,
+      data: {
+        ...caseStudy,
+        imageUrl: caseStudy.imagePath ? getPublicUrl(caseStudy.imagePath) : null,
+      },
     });
   } catch (error) {
     console.error('Create case study error:', error);
@@ -181,12 +198,15 @@ export async function updateCaseStudy(
     }
 
     // Update case study
+    const parsedDate = date ? new Date(date) : undefined;
+    const finalDate = parsedDate && !isNaN(parsedDate.getTime()) ? parsedDate : undefined;
+
     const updatedCaseStudy = await prisma.caseStudy.update({
       where: { id },
       data: {
         title: title.trim(),
         description: sanitizedDescription,
-        date: date ? new Date(date) : undefined,
+        date: finalDate,
       },
       include: {
         author: {
@@ -202,7 +222,10 @@ export async function updateCaseStudy(
     res.status(200).json({
       success: true,
       message: 'Case study updated successfully',
-      data: updatedCaseStudy,
+      data: {
+        ...updatedCaseStudy,
+        imageUrl: updatedCaseStudy.imagePath ? getPublicUrl(updatedCaseStudy.imagePath) : null,
+      },
     });
   } catch (error) {
     console.error('Update case study error:', error);
@@ -240,6 +263,14 @@ export async function deleteCaseStudy(
     }
 
     // Delete case study
+    if (caseStudy.imagePath) {
+      try {
+        await deleteFile(caseStudy.imagePath);
+      } catch (storageErr) {
+        console.error('Delete case study image error:', storageErr);
+      }
+    }
+
     await prisma.caseStudy.delete({
       where: { id },
     });
@@ -251,5 +282,133 @@ export async function deleteCaseStudy(
   } catch (error) {
     console.error('Delete case study error:', error);
     res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
+// Upload/replace case study image
+export async function uploadCaseStudyImage(
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> {
+  try {
+    if (!req.user) {
+      res.status(401).json({ error: 'Authentication required' });
+      return;
+    }
+
+    const { id } = req.params;
+    const file = req.file;
+    validateImageFile(file);
+
+    const caseStudy = await prisma.caseStudy.findUnique({ where: { id } });
+    if (!caseStudy) {
+      res.status(404).json({ error: 'Case study not found' });
+      return;
+    }
+
+    if (caseStudy.authorId !== req.user.userId && req.user.role !== 'admin') {
+      res.status(403).json({ error: 'You can only edit your own case studies' });
+      return;
+    }
+
+    if (caseStudy.imagePath) {
+      try {
+        await deleteFile(caseStudy.imagePath);
+      } catch (err) {
+        console.error('Failed to delete old image:', err);
+      }
+    }
+
+    const filePath = generateFilePath('caseStudy', id, file!.originalname);
+    await uploadFile(filePath, file!.buffer, file!.mimetype);
+
+    const updated = await prisma.caseStudy.update({
+      where: { id },
+      data: { imagePath: filePath },
+      include: {
+        author: {
+          select: {
+            id: true,
+            username: true,
+            email: true,
+          },
+        },
+      },
+    });
+
+    res.status(200).json({
+      success: true,
+      message: 'Image uploaded successfully',
+      data: {
+        ...updated,
+        imageUrl: getPublicUrl(filePath),
+      },
+    });
+  } catch (error: any) {
+    console.error('Upload case study image error:', error);
+    res.status(400).json({ error: error.message || 'Failed to upload image' });
+  }
+}
+
+// Delete case study image
+export async function deleteCaseStudyImage(
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> {
+  try {
+    if (!req.user) {
+      res.status(401).json({ error: 'Authentication required' });
+      return;
+    }
+
+    const { id } = req.params;
+    const caseStudy = await prisma.caseStudy.findUnique({ where: { id } });
+
+    if (!caseStudy) {
+      res.status(404).json({ error: 'Case study not found' });
+      return;
+    }
+
+    if (caseStudy.authorId !== req.user.userId && req.user.role !== 'admin') {
+      res.status(403).json({ error: 'You can only delete your own case studies' });
+      return;
+    }
+
+    if (!caseStudy.imagePath) {
+      res.status(400).json({ error: 'No image to delete' });
+      return;
+    }
+
+    try {
+      await deleteFile(caseStudy.imagePath);
+    } catch (err) {
+      console.error('Failed to delete image from storage:', err);
+    }
+
+    const updated = await prisma.caseStudy.update({
+      where: { id },
+      data: { imagePath: null },
+      include: {
+        author: {
+          select: {
+            id: true,
+            username: true,
+            email: true,
+          },
+        },
+      },
+    });
+
+    res.status(200).json({
+      success: true,
+      message: 'Image deleted successfully',
+      data: {
+        ...updated,
+        imageUrl: null,
+      },
+    });
+  } catch (error) {
+    console.error('Delete case study image error:', error);
+    res.status(500).json({ error: 'Failed to delete image' });
   }
 }
