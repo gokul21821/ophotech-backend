@@ -19,7 +19,11 @@ app.use(helmet());
 // Configure CORS to allow multiple origins
 const allowedOrigins = process.env.ALLOWED_ORIGINS
   ? process.env.ALLOWED_ORIGINS.split(',')
-  : ['http://localhost:3000', 'http://localhost:5000']; // Default for development
+  : [
+      'http://localhost:3000', 
+      'http://localhost:5000',
+      'https://ophotech.com'  // Add production frontend domain
+    ]; // Default for development + production
 
 app.use(cors({
   origin: function (origin, callback) {
