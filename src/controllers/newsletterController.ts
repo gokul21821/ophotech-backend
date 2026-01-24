@@ -100,7 +100,7 @@ export async function createNewsletter(
       return;
     }
 
-    const { title, description, date } = req.body;
+    const { title, description, date, edition } = req.body;
 
     // Validation
     if (!title || !description) {
@@ -119,11 +119,15 @@ export async function createNewsletter(
     const parsedDate = date ? new Date(date) : new Date();
     const finalDate = isNaN(parsedDate.getTime()) ? new Date() : parsedDate;
 
+    const editionValue =
+      typeof edition === 'string' ? (edition.trim() ? edition.trim() : null) : null;
+
     // Create newsletter
     const newsletter = await prisma.newsletter.create({
       data: {
         title: title.trim(),
         description: sanitizedDescription,
+        edition: editionValue,
         date: finalDate,
         authorId: req.user.userId,
         imagePath: null,
@@ -165,7 +169,7 @@ export async function updateNewsletter(
     }
 
     const { id } = req.params;
-    const { title, description, date } = req.body;
+    const { title, description, date, edition } = req.body;
 
     // Validation
     if (!title || !description) {
@@ -201,12 +205,17 @@ export async function updateNewsletter(
     const parsedDate = date ? new Date(date) : undefined;
     const finalDate = parsedDate && !isNaN(parsedDate.getTime()) ? parsedDate : undefined;
 
+    // If edition is omitted, leave unchanged; if empty string, clear to null.
+    const editionValue =
+      typeof edition === 'string' ? (edition.trim() ? edition.trim() : null) : undefined;
+
     const updatedNewsletter = await prisma.newsletter.update({
       where: { id },
       data: {
         title: title.trim(),
         description: sanitizedDescription,
         date: finalDate,
+        edition: editionValue,
       },
       include: {
         author: {

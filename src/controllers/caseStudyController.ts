@@ -100,7 +100,7 @@ export async function createCaseStudy(
       return;
     }
 
-    const { title, description, date } = req.body;
+    const { title, description, date, category } = req.body;
 
     // Validation
     if (!title || !description) {
@@ -119,11 +119,15 @@ export async function createCaseStudy(
     const parsedDate = date ? new Date(date) : new Date();
     const finalDate = isNaN(parsedDate.getTime()) ? new Date() : parsedDate;
 
+    const categoryValue =
+      typeof category === 'string' ? (category.trim() ? category.trim() : null) : null;
+
     // Create case study
     const caseStudy = await prisma.caseStudy.create({
       data: {
         title: title.trim(),
         description: sanitizedDescription,
+        category: categoryValue,
         date: finalDate,
         authorId: req.user.userId,
         imagePath: null,
@@ -165,7 +169,7 @@ export async function updateCaseStudy(
     }
 
     const { id } = req.params;
-    const { title, description, date } = req.body;
+    const { title, description, date, category } = req.body;
 
     // Validation
     if (!title || !description) {
@@ -201,12 +205,17 @@ export async function updateCaseStudy(
     const parsedDate = date ? new Date(date) : undefined;
     const finalDate = parsedDate && !isNaN(parsedDate.getTime()) ? parsedDate : undefined;
 
+    // If category is omitted, leave unchanged; if empty string, clear to null.
+    const categoryValue =
+      typeof category === 'string' ? (category.trim() ? category.trim() : null) : undefined;
+
     const updatedCaseStudy = await prisma.caseStudy.update({
       where: { id },
       data: {
         title: title.trim(),
         description: sanitizedDescription,
         date: finalDate,
+        category: categoryValue,
       },
       include: {
         author: {
