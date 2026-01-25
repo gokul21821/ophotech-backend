@@ -38,7 +38,20 @@ async function main() {
     const newsletter = await prisma.newsletter.create({
       data: {
         title: 'Welcome Newsletter',
-        description: 'This is our first newsletter. Welcome to our community!',
+        content: {
+          type: 'doc',
+          content: [
+            {
+              type: 'paragraph',
+              content: [
+                {
+                  type: 'text',
+                  text: 'This is our first newsletter. Welcome to our community!',
+                },
+              ],
+            },
+          ],
+        },
         date: new Date(),
         authorId: adminUser.id,
       },

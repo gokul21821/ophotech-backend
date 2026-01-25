@@ -1,17 +1,51 @@
 import { Response } from 'express';
 import { AuthenticatedRequest } from '../types';
 import prisma from '../db';
-import sanitizeHtml from 'sanitize-html';
+import { Prisma } from '@prisma/client';
 import { deleteFile, getPublicUrl, uploadFile } from '../services/supabaseClient';
 import { generateFilePath, validateImageFile } from '../middleware/uploadMiddleware';
+import { extractPlainTextFromTiptap, findFirstImageAttrs } from '../utils/tiptap';
+import { deleteAllContentImages, syncStorageWithContent } from '../utils/syncImages';
 
-// HTML sanitization config
-const sanitizeConfig = {
-  allowedTags: ['p', 'strong', 'em', 'u', 'h1', 'h2', 'h3', 'ul', 'ol', 'li', 'a', 'br'],
-  allowedAttributes: {
-    'a': ['href', 'target', 'rel']
+// Create a draft case study (protected)
+export async function createCaseStudyDraft(
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> {
+  try {
+    if (!req.user) {
+      res.status(401).json({ error: 'Authentication required' });
+      return;
+    }
+
+    const caseStudy = await prisma.caseStudy.create({
+      data: {
+        title: '',
+        content: { type: 'doc', content: [] }, // Empty TipTap doc for draft
+        category: null,
+        date: new Date(),
+        authorId: req.user.userId,
+      },
+      include: {
+        author: {
+          select: { id: true, username: true, email: true },
+        },
+      },
+    });
+
+    res.status(201).json({
+      success: true,
+      message: 'Draft created successfully',
+      data: {
+        ...caseStudy,
+        imageUrl: null,
+      },
+    });
+  } catch (error) {
+    console.error('Create case study draft error:', error);
+    res.status(500).json({ error: 'Internal server error' });
   }
-};
+}
 
 // Get all case studies (public)
 export async function getAllCaseStudies(
@@ -34,9 +68,15 @@ export async function getAllCaseStudies(
       },
     });
 
-    const dataWithUrls = caseStudies.map((c) => ({
+    // Filter out drafts (empty content array means draft)
+    const publishedCaseStudies = caseStudies.filter((c) => {
+      const content = c.content as any;
+      return content?.content && Array.isArray(content.content) && content.content.length > 0;
+    });
+
+    const dataWithUrls = publishedCaseStudies.map((c) => ({
       ...c,
-      imageUrl: c.imagePath ? getPublicUrl(c.imagePath) : null,
+      imageUrl: findFirstImageAttrs(c.content)?.src ?? null,
     }));
 
     res.status(200).json({
@@ -80,7 +120,7 @@ export async function getCaseStudyById(
       success: true,
       data: {
         ...caseStudy,
-        imageUrl: caseStudy.imagePath ? getPublicUrl(caseStudy.imagePath) : null,
+        imageUrl: findFirstImageAttrs(caseStudy.content)?.src ?? null,
       },
     });
   } catch (error) {
@@ -100,19 +140,31 @@ export async function createCaseStudy(
       return;
     }
 
-    const { title, description, date, category } = req.body;
+    const { title, date, category, content } = req.body as {
+      title?: string;
+      date?: string;
+      category?: string;
+      content?: unknown;
+    };
 
     // Validation
-    if (!title || !description) {
-      res.status(400).json({ error: 'Title and description are required' });
+    if (!title) {
+      res.status(400).json({ error: 'Title is required' });
+      return;
+    }
+    if (title.trim().length === 0) {
+      res.status(400).json({ error: 'Title cannot be empty' });
       return;
     }
 
-    const sanitizedDescription = sanitizeHtml(description, sanitizeConfig);
-    const plainText = sanitizedDescription.replace(/<[^>]*>/g, '').trim();
+    if (!content) {
+      res.status(400).json({ error: 'Content is required' });
+      return;
+    }
 
-    if (title.trim().length === 0 || plainText.length === 0) {
-      res.status(400).json({ error: 'Title and description cannot be empty' });
+    const plainText = extractPlainTextFromTiptap(content).trim();
+    if (plainText.length === 0) {
+      res.status(400).json({ error: 'Content cannot be empty' });
       return;
     }
 
@@ -126,11 +178,10 @@ export async function createCaseStudy(
     const caseStudy = await prisma.caseStudy.create({
       data: {
         title: title.trim(),
-        description: sanitizedDescription,
+        content: content as Prisma.InputJsonValue,
         category: categoryValue,
         date: finalDate,
         authorId: req.user.userId,
-        imagePath: null,
       },
       include: {
         author: {
@@ -143,12 +194,19 @@ export async function createCaseStudy(
       },
     });
 
+    // Sync images
+    try {
+      await syncStorageWithContent('caseStudy', caseStudy.id, content);
+    } catch (syncErr) {
+      console.error('Case study image sync error:', syncErr);
+    }
+
     res.status(201).json({
       success: true,
       message: 'Case study created successfully',
       data: {
         ...caseStudy,
-        imageUrl: caseStudy.imagePath ? getPublicUrl(caseStudy.imagePath) : null,
+        imageUrl: findFirstImageAttrs(caseStudy.content)?.src ?? null,
       },
     });
   } catch (error) {
@@ -169,21 +227,12 @@ export async function updateCaseStudy(
     }
 
     const { id } = req.params;
-    const { title, description, date, category } = req.body;
-
-    // Validation
-    if (!title || !description) {
-      res.status(400).json({ error: 'Title and description are required' });
-      return;
-    }
-
-    const sanitizedDescription = sanitizeHtml(description, sanitizeConfig);
-    const plainText = sanitizedDescription.replace(/<[^>]*>/g, '').trim();
-
-    if (title.trim().length === 0 || plainText.length === 0) {
-      res.status(400).json({ error: 'Title and description cannot be empty' });
-      return;
-    }
+    const { title, date, category, content } = req.body as {
+      title?: string;
+      date?: string;
+      category?: string;
+      content?: unknown;
+    };
 
     // Find case study
     const caseStudy = await prisma.caseStudy.findUnique({
@@ -201,6 +250,27 @@ export async function updateCaseStudy(
       return;
     }
 
+    // Validation
+    if (!title) {
+      res.status(400).json({ error: 'Title is required' });
+      return;
+    }
+    if (title.trim().length === 0) {
+      res.status(400).json({ error: 'Title cannot be empty' });
+      return;
+    }
+
+    if (!content) {
+      res.status(400).json({ error: 'Content is required' });
+      return;
+    }
+
+    const plainText = extractPlainTextFromTiptap(content).trim();
+    if (plainText.length === 0) {
+      res.status(400).json({ error: 'Content cannot be empty' });
+      return;
+    }
+
     // Update case study
     const parsedDate = date ? new Date(date) : undefined;
     const finalDate = parsedDate && !isNaN(parsedDate.getTime()) ? parsedDate : undefined;
@@ -213,7 +283,7 @@ export async function updateCaseStudy(
       where: { id },
       data: {
         title: title.trim(),
-        description: sanitizedDescription,
+        content: content as Prisma.InputJsonValue,
         date: finalDate,
         category: categoryValue,
       },
@@ -228,12 +298,19 @@ export async function updateCaseStudy(
       },
     });
 
+    // Sync images
+    try {
+      await syncStorageWithContent('caseStudy', id, content);
+    } catch (syncErr) {
+      console.error('Case study image sync error:', syncErr);
+    }
+
     res.status(200).json({
       success: true,
       message: 'Case study updated successfully',
       data: {
         ...updatedCaseStudy,
-        imageUrl: updatedCaseStudy.imagePath ? getPublicUrl(updatedCaseStudy.imagePath) : null,
+        imageUrl: findFirstImageAttrs(updatedCaseStudy.content)?.src ?? null,
       },
     });
   } catch (error) {
@@ -271,13 +348,11 @@ export async function deleteCaseStudy(
       return;
     }
 
-    // Delete case study
-    if (caseStudy.imagePath) {
-      try {
-        await deleteFile(caseStudy.imagePath);
-      } catch (storageErr) {
-        console.error('Delete case study image error:', storageErr);
-      }
+    // Delete all images under case-studies/<id>/ (inline images)
+    try {
+      await deleteAllContentImages('caseStudy', id);
+    } catch (storageErr) {
+      console.error('Delete case study folder images error:', storageErr);
     }
 
     await prisma.caseStudy.delete({
@@ -320,37 +395,20 @@ export async function uploadCaseStudyImage(
       return;
     }
 
-    if (caseStudy.imagePath) {
-      try {
-        await deleteFile(caseStudy.imagePath);
-      } catch (err) {
-        console.error('Failed to delete old image:', err);
-      }
-    }
-
     const filePath = generateFilePath('caseStudy', id, file!.originalname);
     await uploadFile(filePath, file!.buffer, file!.mimetype);
-
-    const updated = await prisma.caseStudy.update({
-      where: { id },
-      data: { imagePath: filePath },
-      include: {
-        author: {
-          select: {
-            id: true,
-            username: true,
-            email: true,
-          },
-        },
-      },
-    });
+    const url = getPublicUrl(filePath);
+    if (!url) {
+      res.status(500).json({ error: 'Failed to generate image URL' });
+      return;
+    }
 
     res.status(200).json({
       success: true,
       message: 'Image uploaded successfully',
       data: {
-        ...updated,
-        imageUrl: getPublicUrl(filePath),
+        url,
+        filePath,
       },
     });
   } catch (error: any) {
@@ -371,6 +429,7 @@ export async function deleteCaseStudyImage(
     }
 
     const { id } = req.params;
+    const { filePath } = (req.body ?? {}) as { filePath?: string };
     const caseStudy = await prisma.caseStudy.findUnique({ where: { id } });
 
     if (!caseStudy) {
@@ -383,38 +442,25 @@ export async function deleteCaseStudyImage(
       return;
     }
 
-    if (!caseStudy.imagePath) {
-      res.status(400).json({ error: 'No image to delete' });
+    if (!filePath || typeof filePath !== 'string') {
+      res.status(400).json({
+        error:
+          'filePath is required. Inline images are controlled by the editor; orphaned images are purged on save.',
+      });
       return;
     }
 
-    try {
-      await deleteFile(caseStudy.imagePath);
-    } catch (err) {
-      console.error('Failed to delete image from storage:', err);
+    if (!filePath.startsWith(`case-studies/${id}/`)) {
+      res.status(400).json({ error: 'Invalid filePath for this case study' });
+      return;
     }
 
-    const updated = await prisma.caseStudy.update({
-      where: { id },
-      data: { imagePath: null },
-      include: {
-        author: {
-          select: {
-            id: true,
-            username: true,
-            email: true,
-          },
-        },
-      },
-    });
+    await deleteFile(filePath);
 
     res.status(200).json({
       success: true,
       message: 'Image deleted successfully',
-      data: {
-        ...updated,
-        imageUrl: null,
-      },
+      data: { filePath },
     });
   } catch (error) {
     console.error('Delete case study image error:', error);

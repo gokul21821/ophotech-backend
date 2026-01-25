@@ -2,6 +2,7 @@ import { Router } from 'express';
 import {
   getAllCaseStudies,
   getCaseStudyById,
+  createCaseStudyDraft,
   createCaseStudy,
   updateCaseStudy,
   deleteCaseStudy,
@@ -18,6 +19,7 @@ router.get('/', getAllCaseStudies);
 router.get('/:id', getCaseStudyById);
 
 // Protected routes
+router.post('/draft', authenticateToken, createCaseStudyDraft);
 router.post('/', authenticateToken, createCaseStudy);
 router.put('/:id', authenticateToken, updateCaseStudy);
 router.delete('/:id', authenticateToken, deleteCaseStudy);

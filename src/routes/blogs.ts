@@ -2,6 +2,7 @@ import { Router } from 'express';
 import {
   getAllBlogs,
   getBlogById,
+  createBlogDraft,
   createBlog,
   updateBlog,
   deleteBlog,
@@ -18,6 +19,7 @@ router.get('/', getAllBlogs);
 router.get('/:id', getBlogById);
 
 // Protected routes
+router.post('/draft', authenticateToken, createBlogDraft);
 router.post('/', authenticateToken, createBlog);
 router.put('/:id', authenticateToken, updateBlog);
 router.delete('/:id', authenticateToken, deleteBlog);

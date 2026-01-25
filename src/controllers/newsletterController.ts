@@ -1,17 +1,51 @@
 import { Response } from 'express';
 import { AuthenticatedRequest } from '../types';
 import prisma from '../db';
-import sanitizeHtml from 'sanitize-html';
+import { Prisma } from '@prisma/client';
 import { deleteFile, getPublicUrl, uploadFile } from '../services/supabaseClient';
 import { generateFilePath, validateImageFile } from '../middleware/uploadMiddleware';
+import { extractPlainTextFromTiptap, findFirstImageAttrs } from '../utils/tiptap';
+import { deleteAllContentImages, syncStorageWithContent } from '../utils/syncImages';
 
-// HTML sanitization config
-const sanitizeConfig = {
-  allowedTags: ['p', 'strong', 'em', 'u', 'h1', 'h2', 'h3', 'ul', 'ol', 'li', 'a', 'br'],
-  allowedAttributes: {
-    'a': ['href', 'target', 'rel']
+// Create a draft newsletter (protected)
+export async function createNewsletterDraft(
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> {
+  try {
+    if (!req.user) {
+      res.status(401).json({ error: 'Authentication required' });
+      return;
+    }
+
+    const newsletter = await prisma.newsletter.create({
+      data: {
+        title: '',
+        content: { type: 'doc', content: [] }, // Empty TipTap doc for draft
+        edition: null,
+        date: new Date(),
+        authorId: req.user.userId,
+      },
+      include: {
+        author: {
+          select: { id: true, username: true, email: true },
+        },
+      },
+    });
+
+    res.status(201).json({
+      success: true,
+      message: 'Draft created successfully',
+      data: {
+        ...newsletter,
+        imageUrl: null,
+      },
+    });
+  } catch (error) {
+    console.error('Create newsletter draft error:', error);
+    res.status(500).json({ error: 'Internal server error' });
   }
-};
+}
 
 // Get all newsletters (public)
 export async function getAllNewsletters(
@@ -34,9 +68,15 @@ export async function getAllNewsletters(
       },
     });
 
-    const dataWithUrls = newsletters.map((n) => ({
+    // Filter out drafts (empty content array means draft)
+    const publishedNewsletters = newsletters.filter((n) => {
+      const content = n.content as any;
+      return content?.content && Array.isArray(content.content) && content.content.length > 0;
+    });
+
+    const dataWithUrls = publishedNewsletters.map((n) => ({
       ...n,
-      imageUrl: n.imagePath ? getPublicUrl(n.imagePath) : null,
+      imageUrl: findFirstImageAttrs(n.content)?.src ?? null,
     }));
 
     res.status(200).json({
@@ -80,7 +120,7 @@ export async function getNewsletterById(
       success: true,
       data: {
         ...newsletter,
-        imageUrl: newsletter.imagePath ? getPublicUrl(newsletter.imagePath) : null,
+        imageUrl: findFirstImageAttrs(newsletter.content)?.src ?? null,
       },
     });
   } catch (error) {
@@ -100,19 +140,31 @@ export async function createNewsletter(
       return;
     }
 
-    const { title, description, date, edition } = req.body;
+    const { title, date, edition, content } = req.body as {
+      title?: string;
+      date?: string;
+      edition?: string;
+      content?: unknown;
+    };
 
     // Validation
-    if (!title || !description) {
-      res.status(400).json({ error: 'Title and description are required' });
+    if (!title) {
+      res.status(400).json({ error: 'Title is required' });
+      return;
+    }
+    if (title.trim().length === 0) {
+      res.status(400).json({ error: 'Title cannot be empty' });
       return;
     }
 
-    const sanitizedDescription = sanitizeHtml(description, sanitizeConfig);
-    const plainText = sanitizedDescription.replace(/<[^>]*>/g, '').trim();
+    if (!content) {
+      res.status(400).json({ error: 'Content is required' });
+      return;
+    }
 
-    if (title.trim().length === 0 || plainText.length === 0) {
-      res.status(400).json({ error: 'Title and description cannot be empty' });
+    const plainText = extractPlainTextFromTiptap(content).trim();
+    if (plainText.length === 0) {
+      res.status(400).json({ error: 'Content cannot be empty' });
       return;
     }
 
@@ -126,11 +178,10 @@ export async function createNewsletter(
     const newsletter = await prisma.newsletter.create({
       data: {
         title: title.trim(),
-        description: sanitizedDescription,
+        content: content as Prisma.InputJsonValue,
         edition: editionValue,
         date: finalDate,
         authorId: req.user.userId,
-        imagePath: null,
       },
       include: {
         author: {
@@ -143,12 +194,19 @@ export async function createNewsletter(
       },
     });
 
+    // Sync images
+    try {
+      await syncStorageWithContent('newsletter', newsletter.id, content);
+    } catch (syncErr) {
+      console.error('Newsletter image sync error:', syncErr);
+    }
+
     res.status(201).json({
       success: true,
       message: 'Newsletter created successfully',
       data: {
         ...newsletter,
-        imageUrl: newsletter.imagePath ? getPublicUrl(newsletter.imagePath) : null,
+        imageUrl: findFirstImageAttrs(newsletter.content)?.src ?? null,
       },
     });
   } catch (error) {
@@ -169,21 +227,12 @@ export async function updateNewsletter(
     }
 
     const { id } = req.params;
-    const { title, description, date, edition } = req.body;
-
-    // Validation
-    if (!title || !description) {
-      res.status(400).json({ error: 'Title and description are required' });
-      return;
-    }
-
-    const sanitizedDescription = sanitizeHtml(description, sanitizeConfig);
-    const plainText = sanitizedDescription.replace(/<[^>]*>/g, '').trim();
-
-    if (title.trim().length === 0 || plainText.length === 0) {
-      res.status(400).json({ error: 'Title and description cannot be empty' });
-      return;
-    }
+    const { title, date, edition, content } = req.body as {
+      title?: string;
+      date?: string;
+      edition?: string;
+      content?: unknown;
+    };
 
     // Find newsletter
     const newsletter = await prisma.newsletter.findUnique({
@@ -201,6 +250,27 @@ export async function updateNewsletter(
       return;
     }
 
+    // Validation
+    if (!title) {
+      res.status(400).json({ error: 'Title is required' });
+      return;
+    }
+    if (title.trim().length === 0) {
+      res.status(400).json({ error: 'Title cannot be empty' });
+      return;
+    }
+
+    if (!content) {
+      res.status(400).json({ error: 'Content is required' });
+      return;
+    }
+
+    const plainText = extractPlainTextFromTiptap(content).trim();
+    if (plainText.length === 0) {
+      res.status(400).json({ error: 'Content cannot be empty' });
+      return;
+    }
+
     // Update newsletter
     const parsedDate = date ? new Date(date) : undefined;
     const finalDate = parsedDate && !isNaN(parsedDate.getTime()) ? parsedDate : undefined;
@@ -213,7 +283,7 @@ export async function updateNewsletter(
       where: { id },
       data: {
         title: title.trim(),
-        description: sanitizedDescription,
+        content: content as Prisma.InputJsonValue,
         date: finalDate,
         edition: editionValue,
       },
@@ -228,12 +298,19 @@ export async function updateNewsletter(
       },
     });
 
+    // Sync images
+    try {
+      await syncStorageWithContent('newsletter', id, content);
+    } catch (syncErr) {
+      console.error('Newsletter image sync error:', syncErr);
+    }
+
     res.status(200).json({
       success: true,
       message: 'Newsletter updated successfully',
       data: {
         ...updatedNewsletter,
-        imageUrl: updatedNewsletter.imagePath ? getPublicUrl(updatedNewsletter.imagePath) : null,
+        imageUrl: findFirstImageAttrs(updatedNewsletter.content)?.src ?? null,
       },
     });
   } catch (error) {
@@ -271,14 +348,12 @@ export async function deleteNewsletter(
       return;
     }
 
-    // Delete newsletter
-    if (newsletter.imagePath) {
-      try {
-        await deleteFile(newsletter.imagePath);
-      } catch (storageErr) {
-        console.error('Delete newsletter image error:', storageErr);
-        // Continue even if storage deletion fails
-      }
+    // Delete all images under newsletters/<id>/ (inline images)
+    try {
+      await deleteAllContentImages('newsletter', id);
+    } catch (storageErr) {
+      console.error('Delete newsletter folder images error:', storageErr);
+      // Continue even if storage deletion fails
     }
 
     await prisma.newsletter.delete({
@@ -324,38 +399,20 @@ export async function uploadNewsletterImage(
       return;
     }
 
-    // Delete old file if exists
-    if (newsletter.imagePath) {
-      try {
-        await deleteFile(newsletter.imagePath);
-      } catch (err) {
-        console.error('Failed to delete old image:', err);
-      }
-    }
-
     const filePath = generateFilePath('newsletter', id, file!.originalname);
     await uploadFile(filePath, file!.buffer, file!.mimetype);
-
-    const updated = await prisma.newsletter.update({
-      where: { id },
-      data: { imagePath: filePath },
-      include: {
-        author: {
-          select: {
-            id: true,
-            username: true,
-            email: true,
-          },
-        },
-      },
-    });
+    const url = getPublicUrl(filePath);
+    if (!url) {
+      res.status(500).json({ error: 'Failed to generate image URL' });
+      return;
+    }
 
     res.status(200).json({
       success: true,
       message: 'Image uploaded successfully',
       data: {
-        ...updated,
-        imageUrl: getPublicUrl(filePath),
+        url,
+        filePath,
       },
     });
   } catch (error: any) {
@@ -376,6 +433,7 @@ export async function deleteNewsletterImage(
     }
 
     const { id } = req.params;
+    const { filePath } = (req.body ?? {}) as { filePath?: string };
 
     const newsletter = await prisma.newsletter.findUnique({
       where: { id },
@@ -391,38 +449,25 @@ export async function deleteNewsletterImage(
       return;
     }
 
-    if (!newsletter.imagePath) {
-      res.status(400).json({ error: 'No image to delete' });
+    if (!filePath || typeof filePath !== 'string') {
+      res.status(400).json({
+        error:
+          'filePath is required. Inline images are controlled by the editor; orphaned images are purged on save.',
+      });
       return;
     }
 
-    try {
-      await deleteFile(newsletter.imagePath);
-    } catch (err) {
-      console.error('Failed to delete image from storage:', err);
+    if (!filePath.startsWith(`newsletters/${id}/`)) {
+      res.status(400).json({ error: 'Invalid filePath for this newsletter' });
+      return;
     }
 
-    const updated = await prisma.newsletter.update({
-      where: { id },
-      data: { imagePath: null },
-      include: {
-        author: {
-          select: {
-            id: true,
-            username: true,
-            email: true,
-          },
-        },
-      },
-    });
+    await deleteFile(filePath);
 
     res.status(200).json({
       success: true,
       message: 'Image deleted successfully',
-      data: {
-        ...updated,
-        imageUrl: null,
-      },
+      data: { filePath },
     });
   } catch (error) {
     console.error('Delete newsletter image error:', error);

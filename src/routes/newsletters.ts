@@ -2,6 +2,7 @@ import { Router } from 'express';
 import {
   getAllNewsletters,
   getNewsletterById,
+  createNewsletterDraft,
   createNewsletter,
   updateNewsletter,
   deleteNewsletter,
@@ -18,6 +19,7 @@ router.get('/', getAllNewsletters);
 router.get('/:id', getNewsletterById);
 
 // Protected routes (authentication required)
+router.post('/draft', authenticateToken, createNewsletterDraft);
 router.post('/', authenticateToken, createNewsletter);
 router.put('/:id', authenticateToken, updateNewsletter);
 router.delete('/:id', authenticateToken, deleteNewsletter);

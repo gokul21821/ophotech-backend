@@ -19,37 +19,34 @@ export interface User {
     export interface Newsletter {
       id: string;
       title: string;
-      description: string;
+      content: any; // TipTap JSON document
       date: Date;
       authorId: string;
       createdAt: Date;
       updatedAt: Date;
-  imagePath?: string | null;
-  imageUrl?: string | null;
+      imageUrl?: string | null; // Derived from content
     }
     
     export interface Blog {
       id: string;
       title: string;
-      description: string;
+      content: any; // TipTap JSON document
       date: Date;
       authorId: string;
       createdAt: Date;
       updatedAt: Date;
-  imagePath?: string | null;
-  imageUrl?: string | null;
+      imageUrl?: string | null; // Derived from content
     }
     
     export interface CaseStudy {
       id: string;
       title: string;
-      description: string;
+      content: any; // TipTap JSON document
       date: Date;
       authorId: string;
       createdAt: Date;
       updatedAt: Date;
-  imagePath?: string | null;
-  imageUrl?: string | null;
+      imageUrl?: string | null; // Derived from content
     }
     
     // Request types
