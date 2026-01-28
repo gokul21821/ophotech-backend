@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import {
   getAllNewsletters,
+  getAllNewslettersAdmin,
   getNewsletterById,
   createNewsletterDraft,
   createNewsletter,
@@ -16,6 +17,8 @@ const router = Router();
 
 // Public routes (no authentication needed)
 router.get('/', getAllNewsletters);
+// Dashboard/admin routes (authentication required)
+router.get('/admin', authenticateToken, getAllNewslettersAdmin);
 router.get('/:id', getNewsletterById);
 
 // Protected routes (authentication required)

@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import {
   getAllCaseStudies,
+  getAllCaseStudiesAdmin,
   getCaseStudyById,
   createCaseStudyDraft,
   createCaseStudy,
@@ -16,6 +17,8 @@ const router = Router();
 
 // Public routes
 router.get('/', getAllCaseStudies);
+// Dashboard/admin routes (authentication required)
+router.get('/admin', authenticateToken, getAllCaseStudiesAdmin);
 router.get('/:id', getCaseStudyById);
 
 // Protected routes

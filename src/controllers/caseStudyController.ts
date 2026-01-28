@@ -22,10 +22,11 @@ export async function createCaseStudyDraft(
       data: {
         title: '',
         content: { type: 'doc', content: [] }, // Empty TipTap doc for draft
+        status: 'DRAFT',
         category: null,
         date: new Date(),
         authorId: req.user.userId,
-      },
+      } as any,
       include: {
         author: {
           select: { id: true, username: true, email: true },
@@ -54,6 +55,48 @@ export async function getAllCaseStudies(
 ): Promise<void> {
   try {
     const caseStudies = await prisma.caseStudy.findMany({
+      where: { status: 'PUBLISHED' as any } as any,
+      include: {
+        author: {
+          select: {
+            id: true,
+            username: true,
+            email: true,
+          },
+        },
+      },
+      orderBy: {
+        createdAt: 'desc',
+      },
+    });
+    const dataWithUrls = caseStudies.map((c) => ({
+      ...c,
+      imageUrl: findFirstImageAttrs(c.content)?.src ?? null,
+    }));
+
+    res.status(200).json({
+      success: true,
+      count: dataWithUrls.length,
+      data: dataWithUrls,
+    });
+  } catch (error) {
+    console.error('Get case studies error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
+// Get all case studies (dashboard/admin - includes drafts) (protected)
+export async function getAllCaseStudiesAdmin(
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> {
+  try {
+    if (!req.user) {
+      res.status(401).json({ error: 'Authentication required' });
+      return;
+    }
+
+    const caseStudies = await prisma.caseStudy.findMany({
       include: {
         author: {
           select: {
@@ -68,13 +111,7 @@ export async function getAllCaseStudies(
       },
     });
 
-    // Filter out drafts (empty content array means draft)
-    const publishedCaseStudies = caseStudies.filter((c) => {
-      const content = c.content as any;
-      return content?.content && Array.isArray(content.content) && content.content.length > 0;
-    });
-
-    const dataWithUrls = publishedCaseStudies.map((c) => ({
+    const dataWithUrls = caseStudies.map((c) => ({
       ...c,
       imageUrl: findFirstImageAttrs(c.content)?.src ?? null,
     }));
@@ -85,7 +122,7 @@ export async function getAllCaseStudies(
       data: dataWithUrls,
     });
   } catch (error) {
-    console.error('Get case studies error:', error);
+    console.error('Get case studies admin error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 }
@@ -111,7 +148,7 @@ export async function getCaseStudyById(
       },
     });
 
-    if (!caseStudy) {
+    if (!caseStudy || (caseStudy as any).status !== 'PUBLISHED') {
       res.status(404).json({ error: 'Case study not found' });
       return;
     }
@@ -179,10 +216,11 @@ export async function createCaseStudy(
       data: {
         title: title.trim(),
         content: content as Prisma.InputJsonValue,
+        status: 'PUBLISHED',
         category: categoryValue,
         date: finalDate,
         authorId: req.user.userId,
-      },
+      } as any,
       include: {
         author: {
           select: {
@@ -227,11 +265,12 @@ export async function updateCaseStudy(
     }
 
     const { id } = req.params;
-    const { title, date, category, content } = req.body as {
+    const { title, date, category, content, status } = req.body as {
       title?: string;
       date?: string;
       category?: string;
       content?: unknown;
+      status?: string;
     };
 
     // Find case study
@@ -250,25 +289,35 @@ export async function updateCaseStudy(
       return;
     }
 
-    // Validation
-    if (!title) {
-      res.status(400).json({ error: 'Title is required' });
-      return;
-    }
-    if (title.trim().length === 0) {
-      res.status(400).json({ error: 'Title cannot be empty' });
-      return;
-    }
+    const parsedStatus = status === 'PUBLISHED' ? 'PUBLISHED' : status === 'DRAFT' ? 'DRAFT' : undefined;
+    const nextStatus = parsedStatus ?? (caseStudy as any).status;
 
-    if (!content) {
-      res.status(400).json({ error: 'Content is required' });
-      return;
-    }
-
-    const plainText = extractPlainTextFromTiptap(content).trim();
-    if (plainText.length === 0) {
-      res.status(400).json({ error: 'Content cannot be empty' });
-      return;
+    // Validation rules:
+    // - PUBLISHED: title + non-empty extracted plain text are required
+    // - DRAFT: allow empty content/title, but require the fields to be present if attempting to change them
+    if (nextStatus === 'PUBLISHED') {
+      if (!title || typeof title !== 'string' || title.trim().length === 0) {
+        res.status(400).json({ error: 'Title is required' });
+        return;
+      }
+      if (!content) {
+        res.status(400).json({ error: 'Content is required' });
+        return;
+      }
+      const plainText = extractPlainTextFromTiptap(content).trim();
+      if (plainText.length === 0) {
+        res.status(400).json({ error: 'Content cannot be empty' });
+        return;
+      }
+    } else {
+      if (title !== undefined && (typeof title !== 'string' || title.trim().length === 0)) {
+        res.status(400).json({ error: 'Title cannot be empty' });
+        return;
+      }
+      if (content !== undefined && !content) {
+        res.status(400).json({ error: 'Content is required' });
+        return;
+      }
     }
 
     // Update case study
@@ -279,13 +328,17 @@ export async function updateCaseStudy(
     const categoryValue =
       typeof category === 'string' ? (category.trim() ? category.trim() : null) : undefined;
 
+    const updateData: any = {};
+    if (typeof title === 'string') updateData.title = title.trim();
+    if (content !== undefined) updateData.content = content as Prisma.InputJsonValue;
+    if (finalDate !== undefined) updateData.date = finalDate;
+    if (categoryValue !== undefined) updateData.category = categoryValue;
+    if (parsedStatus !== undefined) updateData.status = parsedStatus;
+
     const updatedCaseStudy = await prisma.caseStudy.update({
       where: { id },
       data: {
-        title: title.trim(),
-        content: content as Prisma.InputJsonValue,
-        date: finalDate,
-        category: categoryValue,
+        ...updateData,
       },
       include: {
         author: {
@@ -298,11 +351,13 @@ export async function updateCaseStudy(
       },
     });
 
-    // Sync images
-    try {
-      await syncStorageWithContent('caseStudy', id, content);
-    } catch (syncErr) {
-      console.error('Case study image sync error:', syncErr);
+    // Sync images (only when content provided)
+    if (content !== undefined) {
+      try {
+        await syncStorageWithContent('caseStudy', id, content);
+      } catch (syncErr) {
+        console.error('Case study image sync error:', syncErr);
+      }
     }
 
     res.status(200).json({

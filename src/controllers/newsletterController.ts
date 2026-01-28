@@ -22,10 +22,11 @@ export async function createNewsletterDraft(
       data: {
         title: '',
         content: { type: 'doc', content: [] }, // Empty TipTap doc for draft
+        status: 'DRAFT',
         edition: null,
         date: new Date(),
         authorId: req.user.userId,
-      },
+      } as any,
       include: {
         author: {
           select: { id: true, username: true, email: true },
@@ -54,6 +55,7 @@ export async function getAllNewsletters(
 ): Promise<void> {
   try {
     const newsletters = await prisma.newsletter.findMany({
+      where: { status: 'PUBLISHED' as any } as any,
       include: {
         author: {
           select: {
@@ -67,14 +69,7 @@ export async function getAllNewsletters(
         createdAt: 'desc', // Newest first
       },
     });
-
-    // Filter out drafts (empty content array means draft)
-    const publishedNewsletters = newsletters.filter((n) => {
-      const content = n.content as any;
-      return content?.content && Array.isArray(content.content) && content.content.length > 0;
-    });
-
-    const dataWithUrls = publishedNewsletters.map((n) => ({
+    const dataWithUrls = newsletters.map((n) => ({
       ...n,
       imageUrl: findFirstImageAttrs(n.content)?.src ?? null,
     }));
@@ -86,6 +81,48 @@ export async function getAllNewsletters(
     });
   } catch (error) {
     console.error('Get newsletters error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
+// Get all newsletters (dashboard/admin - includes drafts) (protected)
+export async function getAllNewslettersAdmin(
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> {
+  try {
+    if (!req.user) {
+      res.status(401).json({ error: 'Authentication required' });
+      return;
+    }
+
+    const newsletters = await prisma.newsletter.findMany({
+      include: {
+        author: {
+          select: {
+            id: true,
+            username: true,
+            email: true,
+          },
+        },
+      },
+      orderBy: {
+        createdAt: 'desc',
+      },
+    });
+
+    const dataWithUrls = newsletters.map((n) => ({
+      ...n,
+      imageUrl: findFirstImageAttrs(n.content)?.src ?? null,
+    }));
+
+    res.status(200).json({
+      success: true,
+      count: dataWithUrls.length,
+      data: dataWithUrls,
+    });
+  } catch (error) {
+    console.error('Get newsletters admin error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 }
@@ -111,7 +148,7 @@ export async function getNewsletterById(
       },
     });
 
-    if (!newsletter) {
+    if (!newsletter || (newsletter as any).status !== 'PUBLISHED') {
       res.status(404).json({ error: 'Newsletter not found' });
       return;
     }
@@ -179,10 +216,11 @@ export async function createNewsletter(
       data: {
         title: title.trim(),
         content: content as Prisma.InputJsonValue,
+        status: 'PUBLISHED',
         edition: editionValue,
         date: finalDate,
         authorId: req.user.userId,
-      },
+      } as any,
       include: {
         author: {
           select: {
@@ -227,11 +265,12 @@ export async function updateNewsletter(
     }
 
     const { id } = req.params;
-    const { title, date, edition, content } = req.body as {
+    const { title, date, edition, content, status } = req.body as {
       title?: string;
       date?: string;
       edition?: string;
       content?: unknown;
+      status?: string;
     };
 
     // Find newsletter
@@ -250,25 +289,35 @@ export async function updateNewsletter(
       return;
     }
 
-    // Validation
-    if (!title) {
-      res.status(400).json({ error: 'Title is required' });
-      return;
-    }
-    if (title.trim().length === 0) {
-      res.status(400).json({ error: 'Title cannot be empty' });
-      return;
-    }
+    const parsedStatus = status === 'PUBLISHED' ? 'PUBLISHED' : status === 'DRAFT' ? 'DRAFT' : undefined;
+    const nextStatus = parsedStatus ?? (newsletter as any).status;
 
-    if (!content) {
-      res.status(400).json({ error: 'Content is required' });
-      return;
-    }
-
-    const plainText = extractPlainTextFromTiptap(content).trim();
-    if (plainText.length === 0) {
-      res.status(400).json({ error: 'Content cannot be empty' });
-      return;
+    // Validation rules:
+    // - PUBLISHED: title + non-empty extracted plain text are required
+    // - DRAFT: allow empty content/title, but require the fields to be present if attempting to change them
+    if (nextStatus === 'PUBLISHED') {
+      if (!title || typeof title !== 'string' || title.trim().length === 0) {
+        res.status(400).json({ error: 'Title is required' });
+        return;
+      }
+      if (!content) {
+        res.status(400).json({ error: 'Content is required' });
+        return;
+      }
+      const plainText = extractPlainTextFromTiptap(content).trim();
+      if (plainText.length === 0) {
+        res.status(400).json({ error: 'Content cannot be empty' });
+        return;
+      }
+    } else {
+      if (title !== undefined && (typeof title !== 'string' || title.trim().length === 0)) {
+        res.status(400).json({ error: 'Title cannot be empty' });
+        return;
+      }
+      if (content !== undefined && !content) {
+        res.status(400).json({ error: 'Content is required' });
+        return;
+      }
     }
 
     // Update newsletter
@@ -279,13 +328,17 @@ export async function updateNewsletter(
     const editionValue =
       typeof edition === 'string' ? (edition.trim() ? edition.trim() : null) : undefined;
 
+    const updateData: any = {};
+    if (typeof title === 'string') updateData.title = title.trim();
+    if (content !== undefined) updateData.content = content as Prisma.InputJsonValue;
+    if (finalDate !== undefined) updateData.date = finalDate;
+    if (editionValue !== undefined) updateData.edition = editionValue;
+    if (parsedStatus !== undefined) updateData.status = parsedStatus;
+
     const updatedNewsletter = await prisma.newsletter.update({
       where: { id },
       data: {
-        title: title.trim(),
-        content: content as Prisma.InputJsonValue,
-        date: finalDate,
-        edition: editionValue,
+        ...updateData,
       },
       include: {
         author: {
@@ -298,11 +351,13 @@ export async function updateNewsletter(
       },
     });
 
-    // Sync images
-    try {
-      await syncStorageWithContent('newsletter', id, content);
-    } catch (syncErr) {
-      console.error('Newsletter image sync error:', syncErr);
+    // Sync images (only when content provided)
+    if (content !== undefined) {
+      try {
+        await syncStorageWithContent('newsletter', id, content);
+      } catch (syncErr) {
+        console.error('Newsletter image sync error:', syncErr);
+      }
     }
 
     res.status(200).json({

@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import {
   getAllBlogs,
+  getAllBlogsAdmin,
   getBlogById,
   createBlogDraft,
   createBlog,
@@ -16,6 +17,8 @@ const router = Router();
 
 // Public routes
 router.get('/', getAllBlogs);
+// Dashboard/admin routes (authentication required)
+router.get('/admin', authenticateToken, getAllBlogsAdmin);
 router.get('/:id', getBlogById);
 
 // Protected routes
