@@ -34,6 +34,7 @@ model User {
 model Newsletter {
   id        String   @id @default(cuid())
   title     String
+  subtitle  String?  @db.Text
   content   Json // Required, not nullable
   status    PublishStatus @default(DRAFT)
   edition   String?  @db.Text
@@ -50,6 +51,7 @@ model Newsletter {
 model Blog {
   id        String   @id @default(cuid())
   title     String
+  subtitle  String?  @db.Text
   content   Json // Required, not nullable
   status    PublishStatus @default(DRAFT)
   date      DateTime
@@ -65,6 +67,7 @@ model Blog {
 model CaseStudy {
   id        String   @id @default(cuid())
   title     String
+  subtitle  String?  @db.Text
   content   Json // Required, not nullable
   status    PublishStatus @default(DRAFT)
   category  String?  @db.Text

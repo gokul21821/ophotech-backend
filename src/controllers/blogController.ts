@@ -21,6 +21,7 @@ export async function createBlogDraft(
     const blog = await prisma.blog.create({
       data: {
         title: '',
+        subtitle: null,
         content: { type: 'doc', content: [] }, // Empty TipTap doc for draft
         date: new Date(),
         status: 'DRAFT',
@@ -176,8 +177,9 @@ export async function createBlog(
       return;
     }
 
-    const { title, date, content } = req.body as {
+    const { title, subtitle, date, content } = req.body as {
       title?: string;
+      subtitle?: string | null;
       date?: string;
       content?: unknown;
     };
@@ -206,10 +208,14 @@ export async function createBlog(
     const parsedDate = date ? new Date(date) : new Date();
     const finalDate = isNaN(parsedDate.getTime()) ? new Date() : parsedDate;
 
+    const subtitleValue =
+      typeof subtitle === 'string' ? (subtitle.trim() ? subtitle.trim() : null) : null;
+
     // Create blog
     const blog = await prisma.blog.create({
       data: {
         title: title.trim(),
+        subtitle: subtitleValue,
         content: content as Prisma.InputJsonValue,
         date: finalDate,
         status: 'PUBLISHED',
@@ -259,8 +265,9 @@ export async function updateBlog(
     }
 
     const { id } = req.params;
-    const { title, date, content, status } = req.body as {
+    const { title, subtitle, date, content, status } = req.body as {
       title?: string;
+      subtitle?: string | null;
       date?: string;
       content?: unknown;
       status?: string;
@@ -317,8 +324,17 @@ export async function updateBlog(
     const parsedDate = date ? new Date(date) : undefined;
     const finalDate = parsedDate && !isNaN(parsedDate.getTime()) ? parsedDate : undefined;
 
+    // If subtitle is omitted, leave unchanged; if empty string, clear to null.
+    const subtitleValue =
+      subtitle === null
+        ? null
+        : typeof subtitle === 'string'
+          ? (subtitle.trim() ? subtitle.trim() : null)
+          : undefined;
+
     const updateData: any = {};
     if (typeof title === 'string') updateData.title = title.trim();
+    if (subtitleValue !== undefined) updateData.subtitle = subtitleValue;
     if (content !== undefined) updateData.content = content as Prisma.InputJsonValue;
     if (finalDate !== undefined) updateData.date = finalDate;
     if (parsedStatus !== undefined) updateData.status = parsedStatus;

@@ -21,6 +21,7 @@ export async function createCaseStudyDraft(
     const caseStudy = await prisma.caseStudy.create({
       data: {
         title: '',
+        subtitle: null,
         content: { type: 'doc', content: [] }, // Empty TipTap doc for draft
         status: 'DRAFT',
         category: null,
@@ -177,8 +178,9 @@ export async function createCaseStudy(
       return;
     }
 
-    const { title, date, category, content } = req.body as {
+    const { title, subtitle, date, category, content } = req.body as {
       title?: string;
+      subtitle?: string | null;
       date?: string;
       category?: string;
       content?: unknown;
@@ -208,6 +210,9 @@ export async function createCaseStudy(
     const parsedDate = date ? new Date(date) : new Date();
     const finalDate = isNaN(parsedDate.getTime()) ? new Date() : parsedDate;
 
+    const subtitleValue =
+      typeof subtitle === 'string' ? (subtitle.trim() ? subtitle.trim() : null) : null;
+
     const categoryValue =
       typeof category === 'string' ? (category.trim() ? category.trim() : null) : null;
 
@@ -215,6 +220,7 @@ export async function createCaseStudy(
     const caseStudy = await prisma.caseStudy.create({
       data: {
         title: title.trim(),
+        subtitle: subtitleValue,
         content: content as Prisma.InputJsonValue,
         status: 'PUBLISHED',
         category: categoryValue,
@@ -265,8 +271,9 @@ export async function updateCaseStudy(
     }
 
     const { id } = req.params;
-    const { title, date, category, content, status } = req.body as {
+    const { title, subtitle, date, category, content, status } = req.body as {
       title?: string;
+      subtitle?: string | null;
       date?: string;
       category?: string;
       content?: unknown;
@@ -324,12 +331,21 @@ export async function updateCaseStudy(
     const parsedDate = date ? new Date(date) : undefined;
     const finalDate = parsedDate && !isNaN(parsedDate.getTime()) ? parsedDate : undefined;
 
+    // If subtitle is omitted, leave unchanged; if empty string, clear to null.
+    const subtitleValue =
+      subtitle === null
+        ? null
+        : typeof subtitle === 'string'
+          ? (subtitle.trim() ? subtitle.trim() : null)
+          : undefined;
+
     // If category is omitted, leave unchanged; if empty string, clear to null.
     const categoryValue =
       typeof category === 'string' ? (category.trim() ? category.trim() : null) : undefined;
 
     const updateData: any = {};
     if (typeof title === 'string') updateData.title = title.trim();
+    if (subtitleValue !== undefined) updateData.subtitle = subtitleValue;
     if (content !== undefined) updateData.content = content as Prisma.InputJsonValue;
     if (finalDate !== undefined) updateData.date = finalDate;
     if (categoryValue !== undefined) updateData.category = categoryValue;
